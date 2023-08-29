@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Script aimed at shaping a tokamak plasma magnetic profile for given 
-elongation and triangularity
+Created on Mon Aug 28 15:09:48 2023
 
-@author: LL
+@author: lgtle
 """
 # %% Import necessary modules
 
@@ -28,14 +27,14 @@ plt.rcParams.update({'font.size': 22})
 
 # TODO : adapt initconfig depending on Xlb Xup
 
-kappaTarg = 1.8
-deltaTargs = [-0.4, -0.3, 0.3, 0.4, 0.5]
+kappaTarg = 1.7
+deltaTargs = [-0.3, -0.2, -0.1, 0.1, 0.2, 0.3]
 Xlb = 140
 Xub = 170
 tolerance = 0.01
 respath = "resultsPy/"
 hp5path = "hp5_GBS/"
-GBS = True
+GBS = False
 
 Lx = 800
 Ly = 930
@@ -110,9 +109,6 @@ ccurrents = np.array([c0] + caux)
 
 C0 = [xcurrents, ycurrents, ccurrents]
 C = C0
-
-
-# %% FUNCTIONS
 
 
 def Psi(C):
@@ -364,275 +360,103 @@ def specs(C):
     return kappa, delta
 
 
-def optimizeX0(C, toOp):
-    xcurrents, ycurrents, ccurrents = C
-    global Xlb, Xub
+# %% IMPORT nt
 
-    def cost(p):
+Cs = {}
+ds = [-0.4, -0.5]
+k = 1.8
+Xl = 140
+Xu = 170
 
-        Cnew = [list(xcurrents), list(ycurrents), list(ccurrents)]
-        Cnew[0][0] = p
+for d in ds:
+    C = importC(d, k, Xl, Xu)
 
-        Cnew = centerX0(Cnew)
-        Xxpt, Yxpt = XptCoords(Cnew)
+    xc, yc, cc = C
+    xc = [x - 120 for x in xc]
+    C = [xc, yc, cc]
 
-        if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return np.inf
-
-        kappa, delta = specs(Cnew)
-
-        if toOp == 'd':
-            cost = abs(deltaTarg - delta)
-        elif toOp == 'k':
-            cost = abs(kappaTarg - kappa) + \
-                2*abs(deltaTarg - delta)  # Priority on d
-        else:
-            cost = abs(deltaTarg - delta) + abs(kappaTarg - kappa)
-        return cost
-
-    p = xcurrents[0]
-    x0Op = fmin(cost, p)
-
-    xcurrents[0] = x0Op
-    C = centerX0(C)
-    return C
-
-
-def optimizeC(C, i, toOp):
-    """Optimizes parameter ccurrents[i]"""
-
-    xcurrents, ycurrents, ccurrents = C
-    global Xlb, Xub
-
-    def cost(c):
-
-        ccurrents[i] = c
-
-        Cnew = [list(xcurrents), list(ycurrents), list(ccurrents)]
-        Cnew[-1][i] = c
-
-        # Conserve DN symmetry
-        if (i > 1) and (i < (nbaux/2+1)):
-            Cnew[-1][-i+1] = c
-
-        Xxpt, Yxpt = XptCoords(Cnew)
-
-        if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return np.inf
-
-        kappa, delta = specs(Cnew)
-
-        if toOp == 'd':
-            cost = abs(deltaTarg - delta) + 2*abs(kappaTarg - kappa)
-        elif toOp == 'k':
-            cost = abs(kappaTarg - kappa)
-        else:
-            cost = abs(deltaTarg - delta) + abs(kappaTarg - kappa)
-
-        return cost
-
-    c = ccurrents[i]
-    cOp = fmin(cost, c)
-
-    ccurrents[i] = cOp
-    return C
-
-
-def centerX0(C):
-
-    global Lx
-    xcurrents, ycurrents, ccurrents = C
-
-    xshift = 0.51*Lx - xcurrents[0]
-    xcurrentsnew = [x + xshift for x in xcurrents]
-
-    Cnew = [xcurrentsnew, ycurrents, ccurrents]
-    return Cnew
-
-
-# %% Plot initial config
-plt.figure()
-plotMagField(C)
-plt.show()
-plt.close()
-
-# %% OPTIMIZE TRIANGULARITY
-
-
-kappa, delta = specs(C)
-
-for deltaTarg in deltaTargs:
-
-    iteration = 0
-    tol = tolerance
-    C = list(C0)
-    print(f"Target triangularity : delta = {deltaTarg}")
-    print(f"Target elongation : kappa = {kappaTarg}")
-
-    print("Round 0 : fine-tuning all-in-1...")
-    # toOp = None to take into account both delta and kappa
-    C = optimizeX0(C, None)
-    for i in range(int((nbaux)/2+2)):
-        C = optimizeC(C, i, None)
-
-    toOp = 'd'  # d if delta to optimize (priority), k if kappa, None else
-
-    while ((abs(kappa - kappaTarg) > tol) or (abs(delta - deltaTarg) > tol) or (not isXptInBnds(C, Xlb, Xub))):
-
-        print("Previous round failed. Optimizing parameters one by one...")
-        iteration += 1
-
-        # Stop condition
-        if iteration % 100 == 0:
-            print("WARNING : Algorithm did not converge. Try modifying dimensions of box and/or boundaries on X-point.")
-            print("Aborting...")
-            break
-
-        # Change initial conditions to avoid local minimums
-        if iteration % 20 == 0:
-            tol += tolerance
-            C = list(C0)
-            #xcurrents[0] += int(((iteration//10)*nx/100)*np.sign(delta))
-            print(
-                f"WARNING : 20 rounds since last update. Tol incremented by 1. Current tol level : {tol}")
-            print("Configuration reset.")
-        print(f"Round n° {iteration} : x0 optimization for {toOp}...")
-
-        # Optimization of x-coord of main divertor
-        COld = list(C)
-        costOld = abs(kappaTarg-kappa) + abs(deltaTarg-delta)
-
-        C = optimizeX0(C, toOp)
-        kappa, delta = specs(C)
-        cost = abs(kappaTarg-kappa) + abs(deltaTarg-delta)
-
-        # If previous config was better when targets reached, do not make it worse plz
-        if (toOp == None) and (costOld < cost):
-            C = list(COld)
-
-        # Check parameters to optimize
-        if (abs(delta-deltaTarg) <= tol) and (abs(kappa-kappaTarg) > tol):
-            toOp = 'k'
-        elif abs(delta-deltaTarg) > tol:
-            toOp = 'd'
-        else:
-            toOp = None
-
-        # Compute Xpoint coordinates
-        Xxpt, Yxpt = XptCoords(C)
-
-        # Plot current magnetic profile
-        plt.figure()
-        plotMagField(C)
-        plt.show()
-
-        print(f"Round n° {iteration} : c-by-c optimization...")
-
-        # Optimize currents amplitude
-        # Only upper and horizontal currents are varied : others are equalized
-        # by symmetry to keep DN configuration
-        for i in range(int((nbaux)/2+2)):
-
-            print(f"Optimization of current {i} for {toOp}")
-            COld = list(C)
-            costOld = abs(kappaTarg-kappa) + abs(deltaTarg-delta)
-
-            C = optimizeC(C, i, toOp)
-            kappa, delta = specs(C)
-            cost = abs(kappaTarg-kappa) + abs(deltaTarg-delta)
-
-            # If previous config was better when targets reached, do not make it worse plz
-            if (toOp == None) and (costOld < cost):
-                C = list(COld)
-
-            # Check parameters to optimize after each modification
-            if (abs(delta-deltaTarg) <= tol) and (abs(kappa-kappaTarg) > tol):
-                toOp = 'k'
-            elif abs(delta-deltaTarg) > tol:
-                toOp = 'd'
-            else:
-                toOp = None
-
-            plt.figure()
-            plotMagField(C)
-            plt.show()
-
-        print("----------------------------")
-
-    if ((abs(kappa - kappaTarg) < tol) and (abs(delta - deltaTarg) < tol)):
-
-        # Display execution time
-        executionTime = (time.time() - startTime)
-        print('Execution time in seconds: ' + str(executionTime))
-        print('Execution time in minutes: ' + str(executionTime/60))
-        print("Optimization success!")
-
-    # Display final results
-    print("Final configuration : ")
-    print(C)
-    print(f"Final delta: {delta}")
-    print(f"Final kappa: {kappa}")
-
-    Xxpt, Yxpt = XptCoords(C)
-    print(f"Final Yxpt: {Yxpt}")
-
-    # Save data and plot profile
-
-    with open(respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.pkl", "wb") as file:
-        dump(C, file)
-
-    plt.figure()
     plotMagField(C)
-    plt.savefig(
-        respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}.png", format="png")
     plt.show()
 
+    Cs[d] = C
 
-# %% SAVE TO GBS FORMAT
+# %% Cqse -0.3
 
-# if True:
+C = importC(-0.3, k, Xl, Xu)
+xc, yc, cc = C
+xc = [x - 100 for x in xc]
+C = [xc, yc, cc]
+plotMagField(C)
+plt.show()
+Cs[-0.3] = C
 
-#     C = importC(-0.4, 1.8, 140, 170)
+# %% Import PT
 
-    if GBS:
-        Xxpt, Yxpt = XptCoords(C)
+ds = [0.3, 0.4, 0.5]
+for d in ds:
+    C = importC(d, k, Xl, Xu)
 
-        psi = Psi(C)
-        dpdx, dpdy = gradPsi(C)
+    xc, yc, cc = C
+    xc = [x + 120 for x in xc]
+    C = [xc, yc, cc]
 
-        iX, iY = XptCoordsIdx(gradPsi(C))
-        iYup = len(y) - iY
-        Yxptup = y[iYup]
+    plotMagField(C)
+    plt.show()
 
-        d2pdx2, d2pdy2, d2pdxy = grad2Psicheat(C)
-        triang = ("_NT_" if deltaTarg < 0 else "_PT_") + \
-            "d" + (str(deltaTarg).replace('.', 'p'))
-
-        with h5.File(hp5path+"Equil_DN"+triang+".h5", "w") as f:
-            psi_eq = f.create_dataset("psi_eq", (324, 244), dtype='float64')
-            psi_eq[...] = psi
-            dpdx_v = f.create_dataset("dpsidx_v", (324, 244), dtype='float64')
-            dpdx_v[...] = dpdx
-            dpdy_v = f.create_dataset("dpsidy_v", (324, 244), dtype='float64')
-            dpdy_v[...] = dpdy
-            d2psidx2_v = f.create_dataset(
-                "d2psidx2_v", (324, 244), dtype='float64')
-            d2psidx2_v[...] = d2pdx2
-            d2psidy2_v = f.create_dataset(
-                "d2psidy2_v", (324, 244), dtype='float64')
-            d2psidy2_v[...] = d2pdy2
-            xmain = f.create_dataset("xmag1", (1, 1), dtype='float64')
-            xmain[...] = C[0][0]    # x0
-            ymain = f.create_dataset("y0_source", (1, 1), dtype='float64')
-            ymain[...] = C[1][0]
-            yxpt = f.create_dataset("Yxpt_low", (1, 1), dtype='float64')
-            yxpt[...] = Yxpt
-            yxptup = f.create_dataset("Yxpt_up", (1, 1), dtype='float64')
-            yxptup[...] = Yxptup
+    Cs[d] = C
 
 
-# %% PLOT
-# C_delta_-0.5_kappa_1.8_Yl_140_Yu_170
-# Cp = importC(-0.5, 1.8, 140, 170)
-# plotMagField(Cp)
-# plt.show()
+# %% kyungtak
+
+pathK = respath+"kyungtak/"
+
+
+def exportH5(deltaTarg, C, path):
+
+    Xxpt, Yxpt = XptCoords(C)
+
+    psi = Psi(C)
+    dpdx, dpdy = gradPsi(C)
+
+    iX, iY = XptCoordsIdx(gradPsi(C))
+    iYup = len(y) - iY
+    Yxptup = y[iYup]
+
+    d2pdx2, d2pdy2, d2pdxy = grad2Psicheat(C)
+    triang = ("_NT_" if deltaTarg < 0 else "_PT_") + \
+        "d" + (str(deltaTarg).replace('.', 'p'))
+
+    with h5.File(path+"Equil_DN"+triang+".h5", "w") as f:
+        psi_eq = f.create_dataset("psi_eq", (324, 244), dtype='float64')
+        psi_eq[...] = psi
+        dpdx_v = f.create_dataset("dpsidx_v", (324, 244), dtype='float64')
+        dpdx_v[...] = dpdx
+        dpdy_v = f.create_dataset("dpsidy_v", (324, 244), dtype='float64')
+        dpdy_v[...] = dpdy
+        d2psidx2_v = f.create_dataset(
+            "d2psidx2_v", (324, 244), dtype='float64')
+        d2psidx2_v[...] = d2pdx2
+        d2psidy2_v = f.create_dataset(
+            "d2psidy2_v", (324, 244), dtype='float64')
+        d2psidy2_v[...] = d2pdy2
+        xmain = f.create_dataset("xmag1", (1, 1), dtype='float64')
+        xmain[...] = C[0][0]    # x0
+        ymain = f.create_dataset("y0_source", (1, 1), dtype='float64')
+        ymain[...] = C[1][0]
+        yxpt = f.create_dataset("Yxpt_low", (1, 1), dtype='float64')
+        yxpt[...] = Yxpt
+        yxptup = f.create_dataset("Yxpt_up", (1, 1), dtype='float64')
+        yxptup[...] = Yxptup
+
+
+with open(pathK+"CONFIGS.txt", 'w') as f:
+    f.write("CONFIGURATIONS OF CURRENTS FOR DN PROFILES\n-----------------------\n")
+    for d, C in Cs.items():
+        f.write(f"CONFIGURATION FOR DELTA = {d}\n --------------- \n")
+        xc, yc, cc = C
+        for i, x in enumerate(xc):
+            f.write(
+                f"current {i} : X = {x[0]}, Y = {yc[i]}, amplitude = {cc[i]}\n")
+        f.write('--------------------------------------\n')
+
+        exportH5(d, C, pathK)

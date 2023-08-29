@@ -28,14 +28,14 @@ plt.rcParams.update({'font.size': 22})
 
 # TODO : adapt initconfig depending on Xlb Xup
 
-kappaTarg = 1.8
-deltaTargs = [-0.4, -0.3, 0.3, 0.4, 0.5]
+kappaTarg = 1.7
+deltaTargs = [-0.2, -0.1, 0.1, 0.2, 0.3]
 Xlb = 140
 Xub = 170
 tolerance = 0.01
 respath = "resultsPy/"
 hp5path = "hp5_GBS/"
-GBS = True
+GBS = False
 
 Lx = 800
 Ly = 930
@@ -377,7 +377,7 @@ def optimizeX0(C, toOp):
         Xxpt, Yxpt = XptCoords(Cnew)
 
         if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return np.inf
+            return 99999999999
 
         kappa, delta = specs(Cnew)
 
@@ -385,7 +385,7 @@ def optimizeX0(C, toOp):
             cost = abs(deltaTarg - delta)
         elif toOp == 'k':
             cost = abs(kappaTarg - kappa) + \
-                2*abs(deltaTarg - delta)  # Priority on d
+                0.5*abs(deltaTarg - delta)  # Priority on d
         else:
             cost = abs(deltaTarg - delta) + abs(kappaTarg - kappa)
         return cost
@@ -418,7 +418,7 @@ def optimizeC(C, i, toOp):
         Xxpt, Yxpt = XptCoords(Cnew)
 
         if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return np.inf
+            return 99999999999
 
         kappa, delta = specs(Cnew)
 
@@ -435,6 +435,8 @@ def optimizeC(C, i, toOp):
     cOp = fmin(cost, c)
 
     ccurrents[i] = cOp
+    if (i > 1) and (i < (nbaux/2+1)):
+        ccurrents[-i+1] = cOp
     return C
 
 
@@ -469,11 +471,15 @@ for deltaTarg in deltaTargs:
     print(f"Target triangularity : delta = {deltaTarg}")
     print(f"Target elongation : kappa = {kappaTarg}")
 
-    print("Round 0 : fine-tuning all-in-1...")
-    # toOp = None to take into account both delta and kappa
-    C = optimizeX0(C, None)
-    for i in range(int((nbaux)/2+2)):
-        C = optimizeC(C, i, None)
+    # print("Round 0 : fine-tuning all-in-1...")
+
+    # # toOp = None to take into account both delta and kappa
+    # C = optimizeX0(C, None)
+    # for i in range(int((nbaux)/2+2)):
+    #     C = optimizeC(C, i, None)
+
+    # if ((abs(kappa - kappaTarg) > tol) or (abs(delta - deltaTarg) > tol) or (not isXptInBnds(C, Xlb, Xub))):
+    #     C = list(C0)
 
     toOp = 'd'  # d if delta to optimize (priority), k if kappa, None else
 
@@ -578,13 +584,13 @@ for deltaTarg in deltaTargs:
 
     # Save data and plot profile
 
-    with open(respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.pkl", "wb") as file:
+    with open(respath+f"CDN_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.pkl", "wb") as file:
         dump(C, file)
 
     plt.figure()
     plotMagField(C)
     plt.savefig(
-        respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}.png", format="png")
+        respath+f"CDN_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.png", format="png")
     plt.show()
 
 

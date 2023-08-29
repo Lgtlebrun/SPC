@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Aug 18 10:37:28 2023
-Script aimed at shaping a tokamak plasma magnetic profile for given 
+Script aimed at shaping a tokamak plasma magnetic profile for given
 elongation and up/down triangularity
 
 @author: LL
@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 import h5py as h5
-startTime = time.time()
+
 
 plt.rcParams.update(plt.rcParamsDefault)
 plt.rcParams['figure.dpi'] = 300
@@ -31,12 +31,14 @@ plt.rcParams.update({'font.size': 22})
 
 kappaTarg = 1.7
 # deltaTargs = [0.5]
-dupTargs = [0.2, 0.3]
+dupTargs = [0.2]
 ddownTargs = [0]
+METHOD = "Powell"
+MAXITER = 200
 
 Xlb = 120
 Xub = 185
-tolerance = 0.01
+tolerance = 0.001
 respath = "resultsPy/"
 hp5path = "hp5_GBS/"
 GBS = True
@@ -64,7 +66,7 @@ s = 60*Ly/400
 
 def coordsAux(nb, Lx, Ly, x0, y0):
     """Gives coordinates of auxiliary currents depending on their number.
-    Auxiliary currents are dispatched on a circle of ray R = max(Lx, Ly)*0.7, 
+    Auxiliary currents are dispatched on a circle of ray R = max(Lx, Ly)*0.7,
     at equal angulary distance"""
 
     R = max(Lx, Ly)*0.7
@@ -75,7 +77,7 @@ def coordsAux(nb, Lx, Ly, x0, y0):
     return xs, ys
 
 
-n = 3  # nb of auxiliary currents is 2^n, with n >= 2
+n = 2  # nb of auxiliary currents is 2 ^ n, with n >= 2
 
 if n < 2:
     raise ValueError("n cannot be inferior to 2")
@@ -224,6 +226,11 @@ def XptCoordsIdx(gradPsi):
 
     iY, iX = divmod(Bp2.argmin(), Bp2.shape[1])
 
+    # Makes sure Xpt is located down : last closing surface
+    while iY > ny/2:
+        Bp2[iY][iX] = 1e14
+        iY, iX = divmod(Bp2.argmin(), Bp2.shape[1])
+
     return iX, iY
 
 
@@ -243,7 +250,7 @@ def isXptInBnds(C, lb, ub):
     return False
 
 
-def plotMagField(C):
+def plotMagField(C, spec=True):
     """Plots magnetic field"""
 
     global X, Y
@@ -253,8 +260,9 @@ def plotMagField(C):
                 ycurrents]
 
     psi = Psi(C)
-    k, d = specs(C)
-    dup, ddown = d
+    if spec:
+        k, d = specs(C)
+        dup, ddown = d
 
     Xxpt, Yxpt = XptCoords(C)
 
@@ -273,7 +281,8 @@ def plotMagField(C):
     levels = np.arange(psi[y0i][x0i], psi[int(ny/2)]
                        [nx - 5 if sgn == -1 else 6], step=psi[int(ny/2)][int(nx/2)]/200)
 
-    _, _, ZminPt, ZmaxPt = specs(C, True)
+    if spec:
+        _, _, ZminPt, ZmaxPt = specs(C, True)
 
     # Plot level lines
     plt.figure()
@@ -284,18 +293,20 @@ def plotMagField(C):
         plt.plot(currents[0][i], currents[1][i], marker='o')
 
     plt.contour(X, Y, psi, levels=[psi[iY, iX]], colors='r')
-    plt.plot(ZminPt[0], ZminPt[1], marker='+', color='magenta')
-    plt.plot(ZmaxPt[0], ZmaxPt[1], marker='+', color='cyan')
+    if spec:
+        plt.plot(ZminPt[0], ZminPt[1], marker='+', color='magenta')
+        plt.plot(ZmaxPt[0], ZmaxPt[1], marker='+', color='cyan')
     plt.vlines(0, 0, Ly, colors='grey', linestyles='dashed')
     plt.vlines(Lx, 0, Ly, colors='grey', linestyles='dashed')
     plt.xlabel(r'$R/\rho_{s0}$')
     plt.ylabel(r'$Z/\rho_{s0}$')
     plt.title(r'$\Psi$')
-    textstr = r"$\delta_{up} = $"f"{dup:.4}""\n"r"$\delta_{down} = $"f"{ddown:.4}""\n"r"$\kappa = $"f"{k:.4}""\n"r"$Z_{Xpt} = $"f"{Yxpt:.1f}"
-    props = dict(boxstyle='round',
-                 facecolor='lightsteelblue', alpha=0.5)
-    plt.text(0.02, 0.98, textstr, fontsize=14,
-             verticalalignment='top', bbox=props, transform=plt.gca().transAxes)
+    if spec:
+        textstr = r"$\delta_{up} = $"f"{dup:.4}""\n"r"$\delta_{down} = $"f"{ddown:.4}""\n"r"$\kappa = $"f"{k:.4}""\n"r"$Z_{Xpt} = $"f"{Yxpt:.1f}"
+        props = dict(boxstyle='round',
+                     facecolor='lightsteelblue', alpha=0.5)
+        plt.text(0.02, 0.98, textstr, fontsize=14,
+                 verticalalignment='top', bbox=props, transform=plt.gca().transAxes)
 
 
 def importC(delta, kappa, Xl, Xu):
@@ -394,88 +405,53 @@ def specs(C, full=False):
     return kappa, (dup, ddown)
 
 
-def optimizeX0(C, toOp):
-    xcurrents, ycurrents, ccurrents = C
-    global Xlb, Xub
+def optimizeConfig(C, tol, dupTarg, ddownTarg):
+    """ p: x0, y0, c*"""
 
-    def cost(p):
+    def toMinimize(p):
 
-        Cnew = [list(xcurrents), list(ycurrents),
-                list(ccurrents)]
-        Cnew[0][0] = p
+        xc, yc, cc = C
+        Cnew = [list(xc), list(yc), list(cc)]
+        xcurrents, ycurrents, ccurrents = Cnew
+        x0, y0, *c = p
 
-        Cnew = centerX0(Cnew)
+        xcurrents[0] = x0*Lx
+        ycurrents[0] = y0*Ly
+
+        for i, elt in enumerate(c):
+            ccurrents[i] = elt
+
         Xxpt, Yxpt = XptCoords(Cnew)
 
         if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return np.inf
+            return 9999999
 
         try:
             kappa, delta = specs(Cnew)
         except ValueError:
-            return np.inf
+            return 9999999
 
         dup, ddown = delta
 
-        if toOp == 'dup':
-            cost = abs(dupTarg - dup)  # +abs(ddownTarg-ddown)
-        elif toOp == 'ddown':
-            cost = abs(ddownTarg-ddown)  # +abs(dupTarg-dup)
-        elif toOp == 'k':
-            cost = abs(kappaTarg - kappa) + \
-                2*(abs(dupTarg - dup) + abs(ddownTarg-ddown))  # Priority on d
-        else:
-            cost = abs(dupTarg - dup) + abs(ddownTarg-ddown) + \
-                abs(kappaTarg - kappa)
+        cost = abs(dupTarg - dup) + abs(ddownTarg-ddown) + \
+            abs(kappaTarg - kappa)
+
         return cost
 
-    p = xcurrents[0]
-    x0Op = fmin(cost, p)
-
-    xcurrents[0] = x0Op
-    C = centerX0(C)
-    return C
-
-
-def optimizeY0(C, toOp):
     xcurrents, ycurrents, ccurrents = C
-    global Xlb, Xub
+    p = list([xcurrents[0]/Lx, ycurrents[0]/Ly, *ccurrents])
+    res = minimize(toMinimize, p, tol=tol,
+                   method=METHOD, options={"disp": True})
+    pOp = res.x.tolist()
+    print(f"Optimization status : {res.status}")
 
-    def cost(p):
+    xcurrents[0] = pOp.pop(0)*Lx
+    ycurrents[0] = pOp.pop(0)*Ly
+    for i, elt in enumerate(pOp):
+        ccurrents[i] = elt
 
-        Cnew = [list(xcurrents), list(ycurrents),
-                list(ccurrents)]
-        Cnew[1][0] = p
-
-        Cnew = centerX0(Cnew)
-        Xxpt, Yxpt = XptCoords(Cnew)
-
-        if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return np.inf
-
-        try:
-            kappa, delta = specs(Cnew)
-        except ValueError:
-            return np.inf
-        dup, ddown = delta
-
-        if toOp == 'dup':
-            cost = abs(dupTarg - dup) + abs(ddownTarg-ddown)
-        elif toOp == 'ddown':
-            cost = abs(ddownTarg-ddown) + abs(dupTarg - dup)
-        elif toOp == 'k':
-            cost = abs(kappaTarg - kappa) + \
-                2*(abs(dupTarg - dup) + abs(ddownTarg-ddown))  # Priority on d
-        else:
-            cost = abs(dupTarg - dup) + abs(ddownTarg-ddown) + \
-                abs(kappaTarg - kappa)
-        return cost
-
-    p = ycurrents[0]
-    y0Op = fmin(cost, p)
-
-    ycurrents[0] = y0Op
     C = centerX0(C)
+
     return C
 
 
@@ -521,7 +497,7 @@ def optimizeC(C, i, toOp, keepDelta=False):
                              abs(kappaTarg - kappa))
         else:
             cost = abs(dupTarg - dup) + abs(ddownTarg-ddown)  # + \
-            #abs(kappaTarg - kappa)
+            # abs(kappaTarg - kappa)
 
         return cost
 
@@ -547,48 +523,21 @@ def centerX0(C):
     return Cnew
 
 
-def updateToOp(dup, ddown, k):
+# %% Optimize elongation
+print("OPTIMIZING ELONGATION...")
 
-    cost_dup = abs(dup-dupTarg)
-    cost_ddown = abs(ddown-ddownTarg)
-    cost_kappa = abs(kappa-kappaTarg)
+if os.path.isfile(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}_n_{n}.pkl"):
 
-    toOp = 'dup'
-    if cost_ddown > cost_dup:
-        toOp = 'ddown'
-    if (cost_kappa > cost_dup) and (cost_kappa > cost_ddown):
-        toOp = 'k'
-
-    if (cost_dup <= tol) and (cost_ddown <= tol) and (cost_kappa < tol):
-        toOp = None
-
-    # if (abs(dup-dupTarg) <= tol) and (abs(ddown-ddownTarg) <= tol) and (abs(kappa-kappaTarg) > tol):
-    #     toOp = 'k'
-    # elif (abs(ddown-ddownTarg) > tol):
-    #     toOp = 'ddown'
-    # elif (abs(ddown-ddownTarg) <= tol) and (abs(dup-dupTarg) > tol):
-    #     toOp = 'dup'
-    # else:
-    #     toOp = None
-
-    return toOp
-
-
-# %% Optimize kappa
-
-# Load previous initial config
-
-if os.path.isfile(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}.pkl"):
-
-    with open(f"resultsPy/C0_kappa_{kappaTarg}.pkl", 'rb') as file:
+    with open(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}_n_{n}.pkl", 'rb') as file:
         C0 = load(file)
+
+kappa, delta = specs(C0)
 
 tol = tolerance
 iteration = 1
 
-print("OPTIMIZING ELONGATION...")
 print(f"Target elongation : kappa = {kappaTarg}")
-kappa, delta = specs(C0)
+
 while abs(kappaTarg-kappa) > tol:
 
     if iteration % 20 == 0:
@@ -617,169 +566,41 @@ while abs(kappaTarg-kappa) > tol:
 
 # Save optimized initial config
 
-with open(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}.pkl", 'wb') as file:
+with open(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}_n_{n}.pkl", 'wb') as file:
     dump(C0, file)
+
 # %% Plot init config
 plt.figure()
 plotMagField(C0)
 plt.show()
 plt.close()
+print(
+    f"Elongation optimized. Initial conditions are now setup. Starting global optimization...")
 
-# %% OPTIMIZE TRIANGULARITY
+# %% OPTIMIZE
 
-# print("Round 0 : fine-tuning all-in-1...")
-# toOp = None to take into account both delta and kappa
 
-# kappa, delta = specs(C)
-# dup, ddown = delta
-# iteration = 0
-# tol = tolerance
-
-# for dupTarg in dupTargs:
-#     for ddownTarg in ddownTargs:
-#         iteration += 1
-#         while ((abs(kappa - kappaTarg) > tol) or (abs(dup - dupTarg) > tol) or (abs(ddown - ddownTarg) > tol) or (not isXptInBnds(C, Xlb, Xub))):
-#             print(f"Round n° {iteration} : x0 optimization ...")
-#             C = optimizeX0(C, None)
-#             C = optimizeY0(C, None)
-#             for i in range(int((nbaux)/2+2)):
-#                 C = optimizeC(C, i, None)
-#             plt.figure()
-#             plotMagField(C)
-#             plt.show()
-
+print(f"USING METHOD {METHOD}")
 
 for dupTarg in dupTargs:
     for ddownTarg in ddownTargs:
+
         print(f"Target up triangularity : dup = {dupTarg}")
         print(f"Target down triangularity : ddown = {ddownTarg}")
 
-        iteration = 0
-        tol = tolerance
+        startTime = time.time()
+
         C = list(C0)
+        C = optimizeConfig(C, tolerance, dupTarg, ddownTarg)
 
         kappa, delta = specs(C)
+
         dup, ddown = delta
 
-        # d if delta to optimize (priority), k if kappa, None else
-        toOp = None
-
-        while ((abs(kappa - kappaTarg) > tol) or (abs(dup - dupTarg) > tol) or (abs(ddown - ddownTarg) > tol) or (not isXptInBnds(C, Xlb, Xub))):
-
-            print("Optimizing parameters one by one...")
-            iteration += 1
-
-            # Stop condition
-            if iteration % 100 == 0:
-                print(
-                    "WARNING : Algorithm did not converge. Try modifying dimensions of box and/or boundaries on X-point.")
-                print("Aborting...")
-                break
-
-            # Change initial conditions to avoid local minimums
-            if iteration % 20 == 0:
-                tol += tolerance
-                #xcurrents[0] += int(((iteration//10)*nx/100)*np.sign(delta))
-                print(
-                    f"WARNING : 20 rounds since last update. Tol incremented by 1. Current tol level : {tol}")
-                print("Configuration reset.")
-            print(f"Round n° {iteration} : x0 optimization for {toOp}...")
-
-            # Optimization of x-coord of main divertor
-            COld = list(C)
-            costOld = abs(kappaTarg-kappa) + \
-                abs(dupTarg-dup) + abs(ddownTarg-ddown)
-
-            C = optimizeX0(C, toOp)
-            kappa, delta = specs(C)
-            dup, ddown = delta
-
-            cost = abs(kappaTarg-kappa) + \
-                abs(dupTarg-dup) + abs(ddownTarg-ddown)
-
-            # If previous config was better when targets reached, do not make it worse plz
-            if (toOp == None) and (costOld < cost):
-                C = list(COld)
-
-            # Check parameters to optimize
-            toOp = updateToOp(dup, ddown, kappa)
-
-            # Compute Xpoint coordinates
-            Xxpt, Yxpt = XptCoords(C)
-
-            # Plot current magnetic profile
-            plt.figure()
-            plotMagField(C)
-            plt.show()
-
-            print(f"Round n° {iteration} : y0 optimization for {toOp}...")
-
-            # Optimization of y-coord of main divertor
-            COld = list(C)
-            costOld = abs(kappaTarg-kappa) + \
-                abs(dupTarg-dup) + abs(ddownTarg-ddown)
-
-            C = optimizeY0(C, toOp)
-            kappa, delta = specs(C)
-            dup, ddown = delta
-
-            cost = abs(kappaTarg-kappa) + \
-                abs(dupTarg-dup) + abs(ddownTarg-ddown)
-
-            # If previous config was better when targets reached, do not make it worse plz
-            if (toOp == None) and (costOld < cost):
-                C = list(COld)
-
-            # Check parameters to optimize
-            toOp = updateToOp(dup, ddown, kappa)
-
-            # Compute Xpoint coordinates
-            Xxpt, Yxpt = XptCoords(C)
-
-            # Plot current magnetic profile
-            plt.figure()
-            plotMagField(C)
-            plt.show()
-
-            print(f"Round n° {iteration} : c-by-c optimization...")
-
-            # Optimize currents amplitude
-            # Only upper and horizontal currents are varied : others are equalized
-            # by symmetry to keep DN configuration
-            for i in range(nbaux+1):
-
-                print(f"Optimization of current {i} for {toOp}")
-                COld = list(C)
-                costOld = abs(kappaTarg-kappa) + \
-                    abs(dupTarg-dup) + abs(ddownTarg-ddown)
-
-                C = optimizeC(C, i, toOp, True)
-                kappa, delta = specs(C)
-                dup, ddown = delta
-
-                cost = abs(kappaTarg-kappa) + \
-                    abs(dupTarg-dup) + abs(ddownTarg-ddown)
-
-                # If previous config was better when targets reached, do not make it worse plz
-                if (toOp == None) and (costOld < cost):
-                    C = list(COld)
-
-                # Check parameters to optimize after each modification
-                toOp = updateToOp(dup, ddown, kappa)
-
-                plt.figure()
-                plotMagField(C)
-                plt.show()
-
-            print("----------------------------")
-
-        if ((abs(kappa - kappaTarg) < tol) and (abs(dup-dupTarg) < tol) and (abs(ddown-ddownTarg) < tol)):
-
-            # Display execution time
-            executionTime = (time.time() - startTime)
-            print('Execution time in seconds: ' + str(executionTime))
-            print('Execution time in minutes: ' + str(executionTime/60))
-            print("Optimization success!")
+        executionTime = (time.time() - startTime)
+        print('Execution time in seconds: ' + str(executionTime))
+        print('Execution time in minutes: ' + str(executionTime/60))
+        print("Optimization success!")
 
         # Display final results
 
@@ -791,13 +612,13 @@ for dupTarg in dupTargs:
 
         # Save data and plot profile
 
-        with open(respath+f"C_dup_{dup}_ddown_{ddown}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.pkl", "wb") as file:
+        with open(respath+f"COp_dup_{dup}_ddown_{ddown}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.pkl", "wb") as file:
             dump(C, file)
 
         plt.figure()
         plotMagField(C)
         plt.savefig(
-            respath+f"C_dup_{dup}_ddown_{ddown}_kappa_{kappaTarg}.png", format="png")
+            respath+f"COp_dup_{dup}_ddown_{ddown}_kappa_{kappaTarg}.png", format="png")
         plt.show()
 
 
@@ -848,4 +669,5 @@ for dupTarg in dupTargs:
 # C_delta_-0.5_kappa_1.8_Yl_140_Yu_170
 # Cp = importC(-0.5, 1.8, 140, 170)
 # plotMagField(Cp)
+# plt.show()
 # plt.show()
