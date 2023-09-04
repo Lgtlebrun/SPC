@@ -8,6 +8,7 @@ elongation and triangularity
 # %% Import necessary modules
 
 import os
+import scipy.special as sc
 from pickle import load
 from pickle import dump
 from scipy.optimize import minimize, fmin
@@ -28,17 +29,17 @@ plt.rcParams.update({'font.size': 22})
 
 # TODO : adapt initconfig depending on Xlb Xup
 
-kappaTarg = 1.8
-deltaTargs = [-0.4, -0.3, 0.3, 0.4, 0.5]
-Xlb = 140
-Xub = 170
+kappaTarg = 1.7
+deltaTargs = [-0.5, -0.4, -0.3, 0.3, 0.4, 0.5]
+Xlb = 125
+Xub = 155
 tolerance = 0.01
 respath = "resultsPy/"
 hp5path = "hp5_GBS/"
 GBS = True
 
-Lx = 800
-Ly = 930
+Lx = 600
+Ly = 800
 
 R = 700
 nx = 244        # Take even int
@@ -88,7 +89,6 @@ xaux, yaux = coordsAux(nbaux, Lx, Ly, x0, y0)
 xcurrents = [x0] + xaux
 ycurrents = [y0] + yaux
 
-
 # Yxpt_init = 0.18*Ly   # Yxpt_low
 
 
@@ -102,11 +102,12 @@ ycurrents = [y0] + yaux
 
 # Fine-tuned values for optimal init
 prop = max(Lx, Ly)/800
-c0 = 2*prop
-caux = [3*prop if (i+nbaux/4) % (nbaux/2) == 0 else 0 for i in range(nbaux)]
+c0 = prop
+caux = [1.85*prop if (i+nbaux/4) % (nbaux/2) ==
+        0 else 0 for i in range(nbaux)]
 
 
-ccurrents = np.array([c0] + caux)
+ccurrents = [c0] + caux
 
 C0 = [xcurrents, ycurrents, ccurrents]
 C = C0
@@ -123,14 +124,14 @@ def Psi(C):
     global X, Y, I0
 
     # Psi0 : normal current + gaussian profile
-    Psi = I0/2*ccurrents[0]*(np.log((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2)) +
-                             np.exp(-((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2))/(s ** 2)))  # + gaussian profile
+    Psi = I0/2*ccurrents[0]*(np.log((X-xcurrents[0]) **
+                             2+((Y-ycurrents[0]) ** 2))+sc.expn(1, ((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2))/(s ** 2)))  # + gaussian profile
 
     # Additional currents
     for i in range(len(xcurrents)-1):
         Psi += I0/2 * \
             ccurrents[i+1]*(np.log((X-xcurrents[i+1]) **
-                            2+(Y-ycurrents[i+1]) ** 2))
+                            2+((Y-ycurrents[i+1]) ** 2)))
 
     return Psi
 
@@ -142,22 +143,11 @@ def gradPsi(C):
 
     global X, Y, I0, s
 
-    # F = 1-np.exp(-((X-x0) ** 2+(Y-y0) ** 2)/(s ** 2)) * \
-    # ((X-x0)**2 + (Y-y0) ** 2)/(s**2)
-
     r0 = ((X-xcurrents[0]) ** 2) + ((Y-ycurrents[0]) ** 2)
 
-    bx = ccurrents[0]*I0*(Y-ycurrents[0])*(1/r0 - np.exp(-r0/(s ** 2))/(s**2))
-    by = -ccurrents[0]*I0*(X-xcurrents[0])*(1/r0 - np.exp(-r0/(s ** 2))/(s**2))
-
-    for i in range(len(xcurrents)-1):
-
-        ri = ((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2)
-        bx += ccurrents[i+1]*I0*(Y-ycurrents[i+1])/ri
-        by += -ccurrents[i+1]*I0*(X-xcurrents[i+1])/ri
-
-    dpsidx = -by
-    dpsidy = bx
+    psi = Psi(C)
+    dpsidx = np.gradient(psi, axis=1)
+    dpsidy = np.gradient(psi, axis=0)
 
     return dpsidx, dpsidy
 
@@ -364,6 +354,130 @@ def specs(C):
     return kappa, delta
 
 
+def positivityConstraint(p):
+
+    for i, elt in enumerate(p[1:]):
+        if elt < 0:
+            return elt
+
+    return 1
+
+
+def XptConstraint(p):
+
+    global C
+    Cnew = list(C)
+
+    xc, yc, cc = Cnew
+    # xc[0] = p[0] * Lx
+
+    for i, elt in enumerate(p[0:]):
+
+        cc[i] = np.abs(elt)  # Abs to keep ci > 0
+
+        if (i > 1) and (i < ((nbaux+1)/2)):  # Keep DN symmetry
+            cc[-i+1] = np.abs(elt)
+
+    Xxpt, Yxpt = XptCoords(Cnew)
+
+    if (Yxpt > Xub):
+        return Xub - Yxpt
+    elif Yxpt < Xlb:
+        return Yxpt - Xlb
+    return 0
+
+
+def centralConstraint(p):
+
+    c0 = p[0]
+
+    for i, elt in enumerate(p[1:]):
+
+        ratio = elt/c0
+        diff = 1.7501-ratio
+
+        if diff < 0:
+            return diff
+
+    return 0
+
+
+def toMinimize(p):
+
+    global C
+
+    Cnew = list(C)
+
+    xc, yc, ccurrents = Cnew
+
+    xc[0] = p[0]*Lx    # First elt of p is x0
+
+    # All following elts of p are currents
+    for i, elt in enumerate(p[1:]):
+
+        ccurrents[i] = np.abs(elt)  # Abs to keep ci > 0
+
+        if (i > 1) and (i < ((nbaux+1)/2)):  # Keep DN symmetry
+            ccurrents[-i+1] = np.abs(elt)
+
+    if (not isXptInBnds(Cnew, Xlb, Xub)):
+        return 9999999
+
+    try:
+        Cnew = centerX0(Cnew)
+        kappa, delta = specs(Cnew)
+    except ValueError:
+        return 9999999
+
+    cost = (deltaTarg - delta)**2 + (kappaTarg - kappa)**2
+    # If ci > c0, punish
+    # for i, current in enumerate(ccurrents):
+    #     if current > ccurrents[0]:
+    #         cost += abs(ccurrents[0] - current)**2
+
+    return cost
+
+
+def optimizeConfig(C, deltaTarg, kappaTarg):
+    """ p: x0, y0, c*"""
+    kappa, delta = specs(C)
+
+    cost = (deltaTarg - delta)**2 + (kappaTarg - kappa)**2
+    print(f'Initial cost is {cost}')
+
+    xc, yc, cc = C
+
+    p = [xc[0]/Lx] + list(cc[0:int(np.ceil(nbaux/2 + 2))])
+    #p = list(cc[0:int(np.ceil(nbaux/2 + 2))])
+
+    bounds = [(-1, 1)]
+    bounds += [(0, 10) for c in p[1:]]
+
+    # constraints = [
+    #     {'type': 'ineq', 'fun': XptConstraint}]
+
+    res = minimize(toMinimize, p,  method='Nelder-Mead',
+                   bounds=bounds)  # , constraints=constraints)
+
+    p = res.x
+
+    print(p)
+
+    xc[0] = p[0]*Lx
+    for i, elt in enumerate(p[1:]):
+        cc[i] = np.abs(elt)
+        if (i > 1) and (i < ((nbaux+1)/2)):
+            cc[-i+1] = np.abs(elt)
+
+    C = centerX0(C)
+    kappa, delta = specs(C)
+
+    cost = (deltaTarg - delta)**2 + (kappaTarg - kappa)**2
+    print(f"Final cost is {cost}")
+
+    return C
+
+
 def optimizeX0(C, toOp):
     xcurrents, ycurrents, ccurrents = C
     global Xlb, Xub
@@ -382,12 +496,12 @@ def optimizeX0(C, toOp):
         kappa, delta = specs(Cnew)
 
         if toOp == 'd':
-            cost = abs(deltaTarg - delta)
+            cost = abs(deltaTarg - delta)**2
         elif toOp == 'k':
-            cost = abs(kappaTarg - kappa) + \
-                2*abs(deltaTarg - delta)  # Priority on d
+            cost = abs(kappaTarg - kappa)**2 + \
+                abs(deltaTarg - delta)**2  # Priority on d
         else:
-            cost = abs(deltaTarg - delta) + abs(kappaTarg - kappa)
+            cost = abs(deltaTarg - delta)**2 + abs(kappaTarg - kappa)**2
         return cost
 
     p = xcurrents[0]
@@ -406,14 +520,12 @@ def optimizeC(C, i, toOp):
 
     def cost(c):
 
-        ccurrents[i] = c
-
         Cnew = [list(xcurrents), list(ycurrents), list(ccurrents)]
-        Cnew[-1][i] = c
+        Cnew[-1][i] = np.abs(c)
 
         # Conserve DN symmetry
-        if (i > 1) and (i < (nbaux/2+1)):
-            Cnew[-1][-i+1] = c
+        if (i > 1) and (i < ((nbaux+1)/2)):
+            Cnew[-1][-i+1] = np.abs(c)
 
         Xxpt, Yxpt = XptCoords(Cnew)
 
@@ -423,18 +535,25 @@ def optimizeC(C, i, toOp):
         kappa, delta = specs(Cnew)
 
         if toOp == 'd':
-            cost = abs(deltaTarg - delta) + 2*abs(kappaTarg - kappa)
+            cost = abs(deltaTarg - delta)**2 + abs(kappaTarg - kappa)**2
         elif toOp == 'k':
-            cost = abs(kappaTarg - kappa)
+            cost = abs(kappaTarg - kappa)**2
         else:
-            cost = abs(deltaTarg - delta) + abs(kappaTarg - kappa)
+            cost = abs(deltaTarg - delta)**2 + abs(kappaTarg - kappa)**2
+
+        # if (i != 0) and (ccurrents[i] > ccurrents[0]):
+        #     cost += abs(ccurrents[i] - ccurrents[0])**2
 
         return cost
 
     c = ccurrents[i]
     cOp = fmin(cost, c)
 
-    ccurrents[i] = cOp
+    ccurrents[i] = np.abs(cOp)  # Abs makes sure c > 0
+    # Conserve DN symmetry
+    if (i > 1) and (i < ((nbaux+1)/2)):
+        ccurrents[-i+1] = np.abs(cOp)
+
     return C
 
 
@@ -465,17 +584,28 @@ for deltaTarg in deltaTargs:
 
     iteration = 0
     tol = tolerance
-    C = list(C0)
+    C = [list(elt) for elt in C0]
+    print("--------------------------------")
+    print("NEW OPTIMIZATION")
     print(f"Target triangularity : delta = {deltaTarg}")
     print(f"Target elongation : kappa = {kappaTarg}")
 
     print("Round 0 : fine-tuning all-in-1...")
-    # toOp = None to take into account both delta and kappa
-    C = optimizeX0(C, None)
-    for i in range(int((nbaux)/2+2)):
-        C = optimizeC(C, i, None)
 
-    toOp = 'd'  # d if delta to optimize (priority), k if kappa, None else
+    C = optimizeConfig(C, deltaTarg, kappaTarg)
+    plt.figure()
+    plotMagField(C)
+    plt.show()
+
+    kappa, delta = specs(C)
+
+    # Check parameters to optimize after each modification
+    if (abs(delta-deltaTarg) <= tol) and (abs(kappa-kappaTarg) > tol):
+        toOp = 'k'
+    elif abs(delta-deltaTarg) > tol:
+        toOp = 'd'
+    else:
+        toOp = None
 
     while ((abs(kappa - kappaTarg) > tol) or (abs(delta - deltaTarg) > tol) or (not isXptInBnds(C, Xlb, Xub))):
 
@@ -587,6 +717,12 @@ for deltaTarg in deltaTargs:
         respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}.png", format="png")
     plt.show()
 
+    plt.figure()
+    psi = Psi(C)
+    plt.pcolormesh(psi)
+    plt.colorbar()
+    plt.show()
+
 
 # %% SAVE TO GBS FORMAT
 
@@ -636,3 +772,8 @@ for deltaTarg in deltaTargs:
 # Cp = importC(-0.5, 1.8, 140, 170)
 # plotMagField(Cp)
 # plt.show()
+# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-

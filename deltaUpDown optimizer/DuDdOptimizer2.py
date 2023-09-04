@@ -4,7 +4,7 @@ Created on Fri Aug 18 10:37:28 2023
 Script aimed at shaping a tokamak plasma magnetic profile for given
 elongation and up/down triangularity
 
-@author: LL
+@author: LL CREDITS TO ALBIN VERNHES FOR OPTIMIZATION
 """
 # %% Import necessary modules
 
@@ -16,12 +16,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 import h5py as h5
+import scipy.special as sc
 
 
 plt.rcParams.update(plt.rcParamsDefault)
 plt.rcParams['figure.dpi'] = 300
 plt.rcParams.update({
-    "font.family": "Helvetica"
+    "font.family": "DejaVu Sans"
 })
 plt.rcParams.update({'font.size': 22})
 
@@ -30,10 +31,13 @@ plt.rcParams.update({'font.size': 22})
 # TODO : adapt initconfig depending on Xlb Xup
 
 kappaTarg = 1.7
-# deltaTargs = [0.5]
-dupTargs = [0.2]
-ddownTargs = [0]
-METHOD = "Powell"
+
+dupTargs = [-0.3, -0.2, -0.1, 0.1, 0.2, 0.3]
+ddownTargs = [-0.5, -0.4, -0.3, -0.2, 0.2, 0.3, 0.4, 0.5]
+METHODS = [
+
+
+    'Nelder-Mead']
 MAXITER = 200
 
 Xlb = 120
@@ -43,8 +47,8 @@ respath = "resultsPy/"
 hp5path = "hp5_GBS/"
 GBS = True
 
-Lx = 800
-Ly = 930
+Lx = 600
+Ly = 800
 
 R = 700
 nx = 244        # Take even int
@@ -81,7 +85,7 @@ n = 2  # nb of auxiliary currents is 2 ^ n, with n >= 2
 
 if n < 2:
     raise ValueError("n cannot be inferior to 2")
-
+global nbaux
 nbaux = 2**n
 
 # X-coord. of the main plasma current : shifted by 0.1Lx to avoid superimposition with mesh
@@ -119,14 +123,14 @@ def Psi(C):
     global X, Y, I0
 
     # Psi0 : normal current + gaussian profile
-    Psi = I0/2*ccurrents[0]*(np.log((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2)) +
-                             np.exp(-((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2))/(s ** 2)))  # + gaussian profile
+    Psi = I0/2*ccurrents[0]*(np.log((X-xcurrents[0]) **
+                             2+((Y-ycurrents[0]) ** 2))+sc.expn(1, ((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2))/(s ** 2)))  # + gaussian profile
 
     # Additional currents
     for i in range(len(xcurrents)-1):
         Psi += I0/2 * \
             ccurrents[i+1]*(np.log((X-xcurrents[i+1]) **
-                            2+(Y-ycurrents[i+1]) ** 2))
+                            2+((Y-ycurrents[i+1]) ** 2)))
 
     return Psi
 
@@ -138,22 +142,11 @@ def gradPsi(C):
 
     global X, Y, I0, s
 
-    # F = 1-np.exp(-((X-x0) ** 2+(Y-y0) ** 2)/(s ** 2)) * \
-    # ((X-x0)**2 + (Y-y0) ** 2)/(s**2)
-
     r0 = ((X-xcurrents[0]) ** 2) + ((Y-ycurrents[0]) ** 2)
 
-    bx = ccurrents[0]*I0*(Y-ycurrents[0])*(1/r0 - np.exp(-r0/(s ** 2))/(s**2))
-    by = -ccurrents[0]*I0*(X-xcurrents[0])*(1/r0 - np.exp(-r0/(s ** 2))/(s**2))
-
-    for i in range(len(xcurrents)-1):
-
-        ri = ((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2)
-        bx += ccurrents[i+1]*I0*(Y-ycurrents[i+1])/ri
-        by += -ccurrents[i+1]*I0*(X-xcurrents[i+1])/ri
-
-    dpsidx = -by
-    dpsidy = bx
+    psi = Psi(C)
+    dpsidx = np.gradient(psi, axis=1)
+    dpsidy = np.gradient(psi, axis=0)
 
     return dpsidx, dpsidy
 
@@ -166,53 +159,6 @@ def grad2Psicheat(C):
     d2pdxy = np.gradient(dpdx, axis=0)
 
     return d2pdx2, d2pdy2, d2pdxy
-
-
-# def grad2Psi(C):
-
-#     xcurrents, ycurrents, ccurrents = C
-
-#     global X, Y, I0, s
-
-#     x0 = xcurrents[0]
-#     y0 = ycurrents[0]
-#     r0 = ((X-x0) ** 2) + ((Y-y0) ** 2)
-
-#     # Compute separations
-#     r = [r0]
-#     for i in range(len(xcurrents)-1):
-#         r.append(((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2))
-
-#     drdx = 2*(X - xcurrents[i])
-#     drdy = 2*(Y - ycurrents[i])
-
-#     # d/dx (1/r)
-#     d1rdx = [-(1/r[i]**2)*drdx for i in range(len(r))]
-#     d1rdy = [-(1/r[i]**2)*drdy for i in range(len(r))]
-
-#     F = 1 - r[0]*np.exp(-r0/(s**2))/(s**2)
-#     dFdx = drdx*((F-1)/r[0] + (1-F)/(s**2))
-#     dFdy = drdy*((F-1)/r[0] + (1-F)/(s**2))
-
-#     c0 = ccurrents[0]
-#     d2psidx2 = c0*(dFdx * (X - x0)/r[0] + F *
-#                    ((1/r[0]) + (X-x0)*d1rdx[0]))
-#     d2psidy2 = c0*(dFdy * (Y - y0)/r[0] + F *
-#                    ((1/r[0]) + (Y-y0)*d1rdy[0]))
-#     d2psidxdy = c0 * (dFdy * (X - x0)/r[0] +
-#                       F*(1/r[0] + (X-x0)*d1rdy[0]))
-
-#     for i in range(len(xcurrents)-1):
-#         d2psidx2 += ccurrents[i+1]*(1/r[i+1] + (X - xcurrents[i+1])*d1rdx[i+1])
-#         d2psidy2 += ccurrents[i+1]*(1/r[i+1] + (Y - ycurrents[i+1])*d1rdy[i+1])
-#         d2psidxdy += ccurrents[i+1] * \
-#             (1/r[i+1] + (X - xcurrents[i+1])*d1rdy[i+1])
-
-#     d2psidx2 *= I0
-#     d2psidy2 *= I0
-#     d2psidxdy *= I0
-
-#     return d2psidx2, d2psidy2, d2psidxdy
 
 
 def XptCoordsIdx(gradPsi):
@@ -405,112 +351,43 @@ def specs(C, full=False):
     return kappa, (dup, ddown)
 
 
+def toMinimize(C):
+    C = np.split(C, 3)
+
+    if (not isXptInBnds(C, Xlb, Xub)):
+        return 9999999
+
+    try:
+        C = centerX0(C)
+        kappa, delta = specs(C)
+    except ValueError:
+        return 9999999
+
+    dup, ddown = delta
+
+    cost = (dupTarg - dup)**2 + (ddownTarg-ddown)**2 + (kappaTarg - kappa)**2
+
+    return cost
+
+
 def optimizeConfig(C, tol, dupTarg, ddownTarg):
     """ p: x0, y0, c*"""
+    kappa, delta = specs(C)
+    dup, ddown = delta
 
-    def toMinimize(p):
+    cost = (dupTarg - dup)**2 + (ddownTarg-ddown)**2 + (kappaTarg - kappa)**2
+    print(f'Initial cost is {cost}')
 
-        xc, yc, cc = C
-        Cnew = [list(xc), list(yc), list(cc)]
-        xcurrents, ycurrents, ccurrents = Cnew
-        x0, y0, *c = p
-
-        xcurrents[0] = x0*Lx
-        ycurrents[0] = y0*Ly
-
-        for i, elt in enumerate(c):
-            ccurrents[i] = elt
-
-        Xxpt, Yxpt = XptCoords(Cnew)
-
-        if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return 9999999
-
-        try:
-            kappa, delta = specs(Cnew)
-        except ValueError:
-            return 9999999
-
-        dup, ddown = delta
-
-        cost = abs(dupTarg - dup) + abs(ddownTarg-ddown) + \
-            abs(kappaTarg - kappa)
-
-        return cost
-
-    xcurrents, ycurrents, ccurrents = C
-    p = list([xcurrents[0]/Lx, ycurrents[0]/Ly, *ccurrents])
-    res = minimize(toMinimize, p, tol=tol,
-                   method=METHOD, options={"disp": True})
-    pOp = res.x.tolist()
-    print(f"Optimization status : {res.status}")
-
-    xcurrents[0] = pOp.pop(0)*Lx
-    ycurrents[0] = pOp.pop(0)*Ly
-    for i, elt in enumerate(pOp):
-        ccurrents[i] = elt
-
+    C = np.array(C).flatten()
+    res = minimize(toMinimize, C,  method=METHOD)
+    print(res.x)
+    C = np.split(res.x, 3)
     C = centerX0(C)
 
     return C
 
 
-def optimizeC(C, i, toOp, keepDelta=False):
-    """Optimizes parameter ccurrents[i]"""
-
-    xcurrents, ycurrents, ccurrents = C
-    global Xlb, Xub
-
-    def cost(c):
-
-        #     # Conserve DN symmetry
-        # if (i > 1) and (i < (nbaux/2+1)):
-        #     ccurrents[-i+1] = c
-
-        Cnew = [list(xcurrents), list(ycurrents),
-                list(ccurrents)]  # Copy config
-        Cnew[-1][i] = c     # change appropriate coeff
-
-        Xxpt, Yxpt = XptCoords(Cnew)
-
-        if (not isXptInBnds(Cnew, Xlb, Xub)):
-            return np.inf
-
-        try:
-            kappa, delta = specs(Cnew)
-        except ValueError:
-            return np.inf
-
-        dup, ddown = delta
-
-        if toOp == 'dup':
-            cost = abs(dupTarg - dup) + abs(ddownTarg -
-                                            ddown)  # + abs(kappaTarg - kappa)
-        elif toOp == 'ddown':
-            # + 0.5*abs(kappaTarg - kappa)
-            cost = abs(ddownTarg - ddown) + abs(dupTarg - dup)
-        elif toOp == 'k':
-            cost = abs(kappaTarg - kappa)
-
-            if keepDelta:
-                cost += 0.5*(abs(ddownTarg-ddown) +
-                             abs(kappaTarg - kappa))
-        else:
-            cost = abs(dupTarg - dup) + abs(ddownTarg-ddown)  # + \
-            # abs(kappaTarg - kappa)
-
-        return cost
-
-    c = ccurrents[i]
-    cOp = fmin(cost, c)
-
-    ccurrents[i] = cOp
-    return C
-
-
 def centerX0(C):
-
-    global Lx
     xcurrents, ycurrents, ccurrents = C
 
     xshift = 0.51*Lx - xcurrents[0]
@@ -524,7 +401,7 @@ def centerX0(C):
 
 
 # %% Optimize elongation
-print("OPTIMIZING ELONGATION...")
+
 
 if os.path.isfile(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}_n_{n}.pkl"):
 
@@ -533,65 +410,29 @@ if os.path.isfile(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}_n_{n}.pkl")
 
 kappa, delta = specs(C0)
 
-tol = tolerance
 iteration = 1
 
-print(f"Target elongation : kappa = {kappaTarg}")
-
-while abs(kappaTarg-kappa) > tol:
-
-    if iteration % 20 == 0:
-        tol += tolerance
-        print(
-            f"WARNING : tolerance on elongation increased by {tolerance} to {tol}")
-
-    for i in range(nbaux+1):
-
-        kappa, _ = specs(C0)
-
-        print(f"Optimization of current {i}")
-        COld = C0
-        costOld = abs(kappaTarg-kappa)
-
-        C0 = optimizeC(C0, i, 'k')
-        kappa, delta = specs(C0)
-        dup, ddown = delta
-
-        cost = abs(kappaTarg-kappa)
-
-        # If previous config was better when targets reached, do not make it worse plz
-        if (costOld < cost):
-            C0 = COld
-    iteration += 1
-
-# Save optimized initial config
-
-with open(f"resultsPy/C0_kappa_{kappaTarg}_Xu_{Xub}_Xl_{Xlb}_n_{n}.pkl", 'wb') as file:
-    dump(C0, file)
 
 # %% Plot init config
 plt.figure()
 plotMagField(C0)
 plt.show()
 plt.close()
-print(
-    f"Elongation optimized. Initial conditions are now setup. Starting global optimization...")
 
+targ = zip(dupTargs + [0]*len(ddownTargs), [0]*len(dupTargs)+ddownTargs)
 # %% OPTIMIZE
-
-
-print(f"USING METHOD {METHOD}")
-
-for dupTarg in dupTargs:
-    for ddownTarg in ddownTargs:
-
+global METHOD
+for METHOD in METHODS:
+    for dupTarg, ddownTarg in targ:
+        print(
+            f"Starting global optimization using method {METHOD}")
+        print(f"Target kappa = {kappaTarg}")
         print(f"Target up triangularity : dup = {dupTarg}")
         print(f"Target down triangularity : ddown = {ddownTarg}")
 
         startTime = time.time()
 
-        C = list(C0)
-        C = optimizeConfig(C, tolerance, dupTarg, ddownTarg)
+        C = optimizeConfig(C0, tolerance, dupTarg, ddownTarg)
 
         kappa, delta = specs(C)
 
@@ -620,54 +461,3 @@ for dupTarg in dupTargs:
         plt.savefig(
             respath+f"COp_dup_{dup}_ddown_{ddown}_kappa_{kappaTarg}.png", format="png")
         plt.show()
-
-
-# %% SAVE TO GBS FORMAT
-
-# if True:
-
-#     C = importC(-0.4, 1.8, 140, 170)
-
-    # if GBS:
-    #     Xxpt, Yxpt = XptCoords(C)
-
-    #     psi = Psi(C)
-    #     dpdx, dpdy = gradPsi(C)
-
-    #     iX, iY = XptCoordsIdx(gradPsi(C))
-    #     iYup = len(y) - iY
-    #     Yxptup = y[iYup]
-
-    #     d2pdx2, d2pdy2, d2pdxy = grad2Psicheat(C)
-    #     triang = ("_NT_" if deltaTarg < 0 else "_PT_") + \
-    #         "d" + (str(deltaTarg).replace('.', 'p'))
-
-    #     with h5.File(hp5path+"Equil_DN"+triang+".h5", "w") as f:
-    #         psi_eq = f.create_dataset("psi_eq", (324, 244), dtype='float64')
-    #         psi_eq[...] = psi
-    #         dpdx_v = f.create_dataset("dpsidx_v", (324, 244), dtype='float64')
-    #         dpdx_v[...] = dpdx
-    #         dpdy_v = f.create_dataset("dpsidy_v", (324, 244), dtype='float64')
-    #         dpdy_v[...] = dpdy
-    #         d2psidx2_v = f.create_dataset(
-    #             "d2psidx2_v", (324, 244), dtype='float64')
-    #         d2psidx2_v[...] = d2pdx2
-    #         d2psidy2_v = f.create_dataset(
-    #             "d2psidy2_v", (324, 244), dtype='float64')
-    #         d2psidy2_v[...] = d2pdy2
-    #         xmain = f.create_dataset("xmag1", (1, 1), dtype='float64')
-    #         xmain[...] = C[0][0]    # x0
-    #         ymain = f.create_dataset("y0_source", (1, 1), dtype='float64')
-    #         ymain[...] = C[1][0]
-    #         yxpt = f.create_dataset("Yxpt_low", (1, 1), dtype='float64')
-    #         yxpt[...] = Yxpt
-    #         yxptup = f.create_dataset("Yxpt_up", (1, 1), dtype='float64')
-    #         yxptup[...] = Yxptup
-
-
-# %% PLOT
-# C_delta_-0.5_kappa_1.8_Yl_140_Yu_170
-# Cp = importC(-0.5, 1.8, 140, 170)
-# plotMagField(Cp)
-# plt.show()
-# plt.show()

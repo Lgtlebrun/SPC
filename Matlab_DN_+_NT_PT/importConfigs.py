@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 import h5py as h5
+import scipy.special as sc
+
 startTime = time.time()
 
 plt.rcParams.update(plt.rcParamsDefault)
@@ -28,7 +30,7 @@ plt.rcParams.update({'font.size': 22})
 # TODO : adapt initconfig depending on Xlb Xup
 
 kappaTarg = 1.7
-deltaTargs = [-0.3, -0.2, -0.1, 0.1, 0.2, 0.3]
+deltaTargs = [-0.5]
 Xlb = 140
 Xub = 170
 tolerance = 0.01
@@ -36,8 +38,8 @@ respath = "resultsPy/"
 hp5path = "hp5_GBS/"
 GBS = False
 
-Lx = 800
-Ly = 930
+Lx = 600
+Ly = 800
 
 R = 700
 nx = 244        # Take even int
@@ -119,14 +121,14 @@ def Psi(C):
     global X, Y, I0
 
     # Psi0 : normal current + gaussian profile
-    Psi = I0/2*ccurrents[0]*(np.log((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2)) +
-                             np.exp(-((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2))/(s ** 2)))  # + gaussian profile
+    Psi = I0/2*ccurrents[0]*(np.log((X-xcurrents[0]) **
+                             2+((Y-ycurrents[0]) ** 2))+sc.expn(1, ((X-xcurrents[0]) ** 2+((Y-ycurrents[0]) ** 2))/(s ** 2)))  # + gaussian profile
 
     # Additional currents
     for i in range(len(xcurrents)-1):
         Psi += I0/2 * \
             ccurrents[i+1]*(np.log((X-xcurrents[i+1]) **
-                            2+(Y-ycurrents[i+1]) ** 2))
+                            2+((Y-ycurrents[i+1]) ** 2)))
 
     return Psi
 
@@ -143,17 +145,27 @@ def gradPsi(C):
 
     r0 = ((X-xcurrents[0]) ** 2) + ((Y-ycurrents[0]) ** 2)
 
-    bx = ccurrents[0]*I0*(Y-ycurrents[0])*(1/r0 - np.exp(-r0/(s ** 2))/(s**2))
-    by = -ccurrents[0]*I0*(X-xcurrents[0])*(1/r0 - np.exp(-r0/(s ** 2))/(s**2))
+    #
+   # bx = ccurrents[0]*I0*(Y-ycurrents[0]) * \
+   #     (1/r0 - np.exp(- r0/(s ** 2))/(s**2))
+    #
+   # by = -ccurrents[0]*I0*(X-xcurrents[0]) * \
+    #    (1/r0 - np.exp(- r0/(s ** 2))/(s**2))
 
-    for i in range(len(xcurrents)-1):
+    # for i in range(len(xcurrents)-1):
 
-        ri = ((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2)
-        bx += ccurrents[i+1]*I0*(Y-ycurrents[i+1])/ri
-        by += -ccurrents[i+1]*I0*(X-xcurrents[i+1])/ri
+    #     ri = ((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2)
+    #     bx += ccurrents[i+1]*I0*(Y-ycurrents[i+1]) * \
+    #         (1/ri)
+    #     by += -ccurrents[i+1]*I0*(X-xcurrents[i+1]) * \
+    #         (1/ri)
 
-    dpsidx = -by
-    dpsidy = bx
+    # dpsidx = -by
+    # dpsidy = bx
+
+    psi = Psi(C)
+    dpsidx = np.gradient(psi, axis=1)
+    dpsidy = np.gradient(psi, axis=0)
 
     return dpsidx, dpsidy
 
@@ -166,53 +178,6 @@ def grad2Psicheat(C):
     d2pdxy = np.gradient(dpdx, axis=0)
 
     return d2pdx2, d2pdy2, d2pdxy
-
-
-def grad2Psi(C):
-
-    xcurrents, ycurrents, ccurrents = C
-
-    global X, Y, I0, s
-
-    x0 = xcurrents[0]
-    y0 = ycurrents[0]
-    r0 = ((X-x0) ** 2) + ((Y-y0) ** 2)
-
-    # Compute separations
-    r = [r0]
-    for i in range(len(xcurrents)-1):
-        r.append(((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2))
-
-    drdx = 2*(X - xcurrents[i])
-    drdy = 2*(Y - ycurrents[i])
-
-    # d/dx (1/r)
-    d1rdx = [-(1/r[i]**2)*drdx for i in range(len(r))]
-    d1rdy = [-(1/r[i]**2)*drdy for i in range(len(r))]
-
-    F = 1 - r[0]*np.exp(-r0/(s**2))/(s**2)
-    dFdx = drdx*((F-1)/r[0] + (1-F)/(s**2))
-    dFdy = drdy*((F-1)/r[0] + (1-F)/(s**2))
-
-    c0 = ccurrents[0]
-    d2psidx2 = c0*(dFdx * (X - x0)/r[0] + F *
-                   ((1/r[0]) + (X-x0)*d1rdx[0]))
-    d2psidy2 = c0*(dFdy * (Y - y0)/r[0] + F *
-                   ((1/r[0]) + (Y-y0)*d1rdy[0]))
-    d2psidxdy = c0 * (dFdy * (X - x0)/r[0] +
-                      F*(1/r[0] + (X-x0)*d1rdy[0]))
-
-    for i in range(len(xcurrents)-1):
-        d2psidx2 += ccurrents[i+1]*(1/r[i+1] + (X - xcurrents[i+1])*d1rdx[i+1])
-        d2psidy2 += ccurrents[i+1]*(1/r[i+1] + (Y - ycurrents[i+1])*d1rdy[i+1])
-        d2psidxdy += ccurrents[i+1] * \
-            (1/r[i+1] + (X - xcurrents[i+1])*d1rdy[i+1])
-
-    d2psidx2 *= I0
-    d2psidy2 *= I0
-    d2psidxdy *= I0
-
-    return d2psidx2, d2psidy2, d2psidxdy
 
 
 def XptCoordsIdx(gradPsi):
@@ -305,6 +270,12 @@ def importC(delta, kappa, Xl, Xu):
     return C
 
 
+def exportC(delta, kappa, Xl, Xu):
+
+    with open(respath+f"Ccentered_delta_{delta}_kappa_{kappa}_Yl_{Xl}_Yu_{Xu}.pkl", "wb") as file:
+        dump(C, file)
+
+
 def plotSavedC(delta, kappa):
 
     with open(respath+f"C_delta_{delta}_kappa_{kappa}.pkl", "rb") as file:
@@ -363,13 +334,14 @@ def specs(C):
 # %% IMPORT nt
 
 Cs = {}
-ds = [-0.4, -0.5]
-k = 1.8
-Xl = 140
-Xu = 170
+ds = [-0.4, - 0.5]
+k = 1.7
+Xl = 125
+Xu = 155
 
 for d in ds:
     C = importC(d, k, Xl, Xu)
+    print(C)
 
     xc, yc, cc = C
     xc = [x - 120 for x in xc]
@@ -390,9 +362,17 @@ plotMagField(C)
 plt.show()
 Cs[-0.3] = C
 
+C = importC(0.3, k, Xl, Xu)
+xc, yc, cc = C
+xc = [x + 100 for x in xc]
+C = [xc, yc, cc]
+plotMagField(C)
+plt.show()
+Cs[0.3] = C
+
 # %% Import PT
 
-ds = [0.3, 0.4, 0.5]
+ds = [0.4, 0.5]
 for d in ds:
     C = importC(d, k, Xl, Xu)
 
@@ -454,9 +434,11 @@ with open(pathK+"CONFIGS.txt", 'w') as f:
     for d, C in Cs.items():
         f.write(f"CONFIGURATION FOR DELTA = {d}\n --------------- \n")
         xc, yc, cc = C
-        for i, x in enumerate(xc):
+        for i, xi in enumerate(xc):
             f.write(
-                f"current {i} : X = {x[0]}, Y = {yc[i]}, amplitude = {cc[i]}\n")
+                f"current {i} : X = {xi}, Y = {yc[i]}, amplitude = {cc[i]}\n")
         f.write('--------------------------------------\n')
 
         exportH5(d, C, pathK)
+        exportH5(d, C, pathK)
+        exportC(d, k, Xl, Xu)
