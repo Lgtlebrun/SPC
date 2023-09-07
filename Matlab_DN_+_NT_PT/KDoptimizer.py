@@ -38,6 +38,12 @@ respath = "resultsPy/"
 hp5path = "hp5_GBS/"
 GBS = True
 
+if not os.path.isdir(respath):
+    os.mkdir(respath)
+
+if not os.path.isdir(hp5path):
+    os.mkdir(hp5path)
+
 Lx = 600
 Ly = 800
 
@@ -50,8 +56,10 @@ dy = Ly/(ny-4)
 
 x = np.arange(-3/2*dx, Lx+5*dx/2, step=dx)
 y = np.arange(-3/2*dy, Ly+5*dy/2, step=dy)
+yn = np.arange(-1/2*dy, Ly+7*dy/2, step=dy)
 
 X, Y = np.meshgrid(x, y)
+Xn, Yn = np.meshgrid(x, yn)
 
 I0 = 2000*Ly/400*Lx/300         # Reference current amplitude
 s = 60*Ly/400
@@ -89,19 +97,8 @@ xaux, yaux = coordsAux(nbaux, Lx, Ly, x0, y0)
 xcurrents = [x0] + xaux
 ycurrents = [y0] + yaux
 
-# Yxpt_init = 0.18*Ly   # Yxpt_low
 
-
-# y1 = y0 - np.sqrt(3)*(y0-Yxpt_init)
-# y2 = y0 + np.sqrt(3)*(y0-Yxpt_init)
-# y3 = y0 - np.sqrt(3)*(y0-Yxpt_init)  # Upper shaping current
-# y4 = y0 + np.sqrt(3)*(y0-Yxpt_init)  # Lower shaping current
-
-# y5 = y0
-# y6 = y0
-
-# Fine-tuned values for optimal init
-prop = max(Lx, Ly)/800
+prop = 1
 c0 = prop
 caux = [1.85*prop if (i+nbaux/4) % (nbaux/2) ==
         0 else 0 for i in range(nbaux)]
@@ -110,18 +107,16 @@ caux = [1.85*prop if (i+nbaux/4) % (nbaux/2) ==
 ccurrents = [c0] + caux
 
 C0 = [xcurrents, ycurrents, ccurrents]
-C = C0
-
 
 # %% FUNCTIONS
 
 
-def Psi(C):
+def Psi(C, X, Y):
     """Computes the magnetic flux out of a given configuration C"""
 
     xcurrents, ycurrents, ccurrents = C
 
-    global X, Y, I0
+    global I0
 
     # Psi0 : normal current + gaussian profile
     Psi = I0/2*ccurrents[0]*(np.log((X-xcurrents[0]) **
@@ -136,77 +131,78 @@ def Psi(C):
     return Psi
 
 
-def gradPsi(C):
+def gradPsi(C, X, Y):
     """Computes the gradient of magnetic flux out of a given configuration C"""
 
     xcurrents, ycurrents, ccurrents = C
 
-    global X, Y, I0, s
+    global I0, s
 
     r0 = ((X-xcurrents[0]) ** 2) + ((Y-ycurrents[0]) ** 2)
 
-    psi = Psi(C)
+    psi = Psi(C, X, Y)
     dpsidx = np.gradient(psi, axis=1)
     dpsidy = np.gradient(psi, axis=0)
 
     return dpsidx, dpsidy
 
 
-def grad2Psicheat(C):
+def grad2Psicheat(C, X, Y):
+    """Computes double derivative of magnetic flux"""
 
-    dpdx, dpdy = gradPsi(C)
+    dpdx, dpdy = gradPsi(C, X, Y)
     d2pdx2 = np.gradient(dpdx, axis=1)
     d2pdy2 = np.gradient(dpdy, axis=0)
     d2pdxy = np.gradient(dpdx, axis=0)
 
     return d2pdx2, d2pdy2, d2pdxy
 
+# OBSOLETE
+# def grad2Psi(C, X, Y):
 
-def grad2Psi(C):
+#     xcurrents, ycurrents, ccurrents = C
 
-    xcurrents, ycurrents, ccurrents = C
+#     global I0, s
 
-    global X, Y, I0, s
+#     x0 = xcurrents[0]
+#     y0 = ycurrents[0]
+#     r0 = ((X-x0) ** 2) + ((Y-y0) ** 2)
 
-    x0 = xcurrents[0]
-    y0 = ycurrents[0]
-    r0 = ((X-x0) ** 2) + ((Y-y0) ** 2)
+#     # Compute separations
+#     r = [r0]
+#     for i in range(len(xcurrents)-1):
+#         r.append(((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2))
 
-    # Compute separations
-    r = [r0]
-    for i in range(len(xcurrents)-1):
-        r.append(((X-xcurrents[i+1]) ** 2) + ((Y-ycurrents[i+1]) ** 2))
+#     drdx = 2*(X - xcurrents[i])
+#     drdy = 2*(Y - ycurrents[i])
 
-    drdx = 2*(X - xcurrents[i])
-    drdy = 2*(Y - ycurrents[i])
+#     # d/dx (1/r)
+#     d1rdx = [-(1/r[i]**2)*drdx for i in range(len(r))]
+#     d1rdy = [-(1/r[i]**2)*drdy for i in range(len(r))]
 
-    # d/dx (1/r)
-    d1rdx = [-(1/r[i]**2)*drdx for i in range(len(r))]
-    d1rdy = [-(1/r[i]**2)*drdy for i in range(len(r))]
+#     F = 1 - r[0]*np.exp(-r0/(s**2))/(s**2)
+#     dFdx = drdx*((F-1)/r[0] + (1-F)/(s**2))
+#     dFdy = drdy*((F-1)/r[0] + (1-F)/(s**2))
 
-    F = 1 - r[0]*np.exp(-r0/(s**2))/(s**2)
-    dFdx = drdx*((F-1)/r[0] + (1-F)/(s**2))
-    dFdy = drdy*((F-1)/r[0] + (1-F)/(s**2))
+#     c0 = ccurrents[0]
+#     d2psidx2 = c0*(dFdx * (X - x0)/r[0] + F *
+#                    ((1/r[0]) + (X-x0)*d1rdx[0]))
+#     d2psidy2 = c0*(dFdy * (Y - y0)/r[0] + F *
+#                    ((1/r[0]) + (Y-y0)*d1rdy[0]))
+#     d2psidxdy = c0 * (dFdy * (X - x0)/r[0] +
+#                       F*(1/r[0] + (X-x0)*d1rdy[0]))
 
-    c0 = ccurrents[0]
-    d2psidx2 = c0*(dFdx * (X - x0)/r[0] + F *
-                   ((1/r[0]) + (X-x0)*d1rdx[0]))
-    d2psidy2 = c0*(dFdy * (Y - y0)/r[0] + F *
-                   ((1/r[0]) + (Y-y0)*d1rdy[0]))
-    d2psidxdy = c0 * (dFdy * (X - x0)/r[0] +
-                      F*(1/r[0] + (X-x0)*d1rdy[0]))
+#     for i in range(len(xcurrents)-1):
+#         d2psidx2 += ccurrents[i+1]*(1/r[i+1] + (X - xcurrents[i+1])*d1rdx[i+1])
+#         d2psidy2 += ccurrents[i+1]*(1/r[i+1] + (Y - ycurrents[i+1])*d1rdy[i+1])
+#         d2psidxdy += ccurrents[i+1] * \
+#             (1/r[i+1] + (X - xcurrents[i+1])*d1rdy[i+1])
 
-    for i in range(len(xcurrents)-1):
-        d2psidx2 += ccurrents[i+1]*(1/r[i+1] + (X - xcurrents[i+1])*d1rdx[i+1])
-        d2psidy2 += ccurrents[i+1]*(1/r[i+1] + (Y - ycurrents[i+1])*d1rdy[i+1])
-        d2psidxdy += ccurrents[i+1] * \
-            (1/r[i+1] + (X - xcurrents[i+1])*d1rdy[i+1])
+#     d2psidx2 *= I0
+#     d2psidy2 *= I0
+#     d2psidxdy *= I0
 
-    d2psidx2 *= I0
-    d2psidy2 *= I0
-    d2psidxdy *= I0
-
-    return d2psidx2, d2psidy2, d2psidxdy
+#     return d2psidx2, d2psidy2, d2psidxdy
 
 
 def XptCoordsIdx(gradPsi):
@@ -228,7 +224,7 @@ def XptCoordsIdx(gradPsi):
 
 def XptCoords(C):
 
-    iX, iY = XptCoordsIdx(gradPsi(C))
+    iX, iY = XptCoordsIdx(gradPsi(C, X, Y))
 
     return x[iX], y[iY]
 
@@ -251,7 +247,7 @@ def plotMagField(C):
     currents = [xcurrents,
                 ycurrents]
 
-    psi = Psi(C)
+    psi = Psi(C, X, Y)
     k, d = specs(C)
     Xxpt, Yxpt = XptCoords(C)
 
@@ -264,7 +260,7 @@ def plotMagField(C):
     x0i = int(np.round(x0/dx))
     y0i = int(np.round(y0/dy))
 
-    iX, iY = XptCoordsIdx(gradPsi(C))
+    iX, iY = XptCoordsIdx(gradPsi(C, X, Y))
     ixlowlvl = iX - sgn*2
 
     levels = np.arange(psi[y0i][x0i], psi[int(ny/2)]
@@ -309,15 +305,36 @@ def plotSavedC(delta, kappa):
         plt.show()
 
 
-def specs(C):
+def getSep(psi, gradPsi):
+    """Returns points of the contour of separatrix"""
+
+    global X, Y, x, y
+
+    iX, iY = XptCoordsIdx(gradPsi)
+    Xxpt = x[iX]
+    Yxptlow = y[iY]
+    Yxptup = y[-1] - Yxptlow
+
+    level = psi[iY, iX]
+
+    plt.figure(1)
+    cs = plt.contour(X, Y, psi, levels=[level])
+    plt.close()
+
+    separatrix = [x.vertices for x in cs.collections[0].get_paths()]
+    separatrix = np.concatenate(separatrix)
+    return separatrix
+
+
+def specs(C, Rdisp=False):
     """Computes and returns : elongation kappa, triangularity delta
     """
 
     global X, Y, x, y
 
-    psi = Psi(C)
+    psi = Psi(C, X, Y)
 
-    iX, iY = XptCoordsIdx(gradPsi(C))
+    iX, iY = XptCoordsIdx(gradPsi(C, X, Y))
     Xxpt = x[iX]
     Yxptlow = y[iY]
     Yxptup = y[-1] - Yxptlow
@@ -351,55 +368,58 @@ def specs(C):
     kappa = (Yxptup-Yxptlow)/(Rmax-Rmin)
     delta = (R0 - Xxpt)/a   # Assumed same X for both Xpoints
 
+    if Rdisp:
+        return kappa, delta, Rmin, Rmax
+
     return kappa, delta
 
 
-def positivityConstraint(p):
+# def positivityConstraint(p):
 
-    for i, elt in enumerate(p[1:]):
-        if elt < 0:
-            return elt
+#     for i, elt in enumerate(p[1:]):
+#         if elt < 0:
+#             return elt
 
-    return 1
-
-
-def XptConstraint(p):
-
-    global C
-    Cnew = list(C)
-
-    xc, yc, cc = Cnew
-    # xc[0] = p[0] * Lx
-
-    for i, elt in enumerate(p[0:]):
-
-        cc[i] = np.abs(elt)  # Abs to keep ci > 0
-
-        if (i > 1) and (i < ((nbaux+1)/2)):  # Keep DN symmetry
-            cc[-i+1] = np.abs(elt)
-
-    Xxpt, Yxpt = XptCoords(Cnew)
-
-    if (Yxpt > Xub):
-        return Xub - Yxpt
-    elif Yxpt < Xlb:
-        return Yxpt - Xlb
-    return 0
+#     return 1
 
 
-def centralConstraint(p):
+# def XptConstraint(p):
 
-    c0 = p[0]
+#     global C
+#     Cnew = list(C)
 
-    for i, elt in enumerate(p[1:]):
+#     xc, yc, cc = Cnew
+#     # xc[0] = p[0] * Lx
 
-        ratio = elt/c0
-        diff = 1.7501-ratio
+#     for i, elt in enumerate(p[0:]):
 
-        if diff < 0:
-            return diff
+#         cc[i] = np.abs(elt)  # Abs to keep ci > 0
 
-    return 0
+#         if (i > 1) and (i < ((nbaux+1)/2)):  # Keep DN symmetry
+#             cc[-i+1] = np.abs(elt)
+
+#     Xxpt, Yxpt = XptCoords(Cnew)
+
+#     if (Yxpt > Xub):
+#         return Xub - Yxpt
+#     elif Yxpt < Xlb:
+#         return Yxpt - Xlb
+#     return 0
+
+
+# def centralConstraint(p):
+
+#     c0 = p[0]
+
+#     for i, elt in enumerate(p[1:]):
+
+#         ratio = elt/c0
+#         diff = 1.7501-ratio
+
+#         if diff < 0:
+#             return diff
+
+#     return 0
 
 
 def toMinimize(p):
@@ -529,7 +549,7 @@ def optimizeC(C, i, toOp):
 
         Xxpt, Yxpt = XptCoords(Cnew)
 
-        if (not isXptInBnds(Cnew, Xlb, Xub)):
+        if (not isXptInBnds(Cnew, Xlb, Xub)) and (toOp != 'X'):
             return np.inf
 
         kappa, delta = specs(Cnew)
@@ -538,6 +558,11 @@ def optimizeC(C, i, toOp):
             cost = abs(deltaTarg - delta)**2 + abs(kappaTarg - kappa)**2
         elif toOp == 'k':
             cost = abs(kappaTarg - kappa)**2
+        elif toOp == 'X':
+            if isXptInBnds(Cnew, Xlb, Xub):
+                return 0
+            cost = abs(Yxpt - Xlb)**2 + abs(Yxpt - Xub)**2
+
         else:
             cost = abs(deltaTarg - delta)**2 + abs(kappaTarg - kappa)**2
 
@@ -558,6 +583,7 @@ def optimizeC(C, i, toOp):
 
 
 def centerX0(C):
+    """Shifts all currents to keep the central current at center of mesh"""
 
     global Lx
     xcurrents, ycurrents, ccurrents = C
@@ -569,22 +595,93 @@ def centerX0(C):
     return Cnew
 
 
+def centerLegs(C):
+    """shifts all currents to get the legs of the separatrix away from boundary"""
+
+    tolBound = 20  # Limit distance to the wall
+    iterations = 1
+
+    kappa, delta, Rmin, Rmax = specs(C, True)
+
+    separatrix = getSep(Psi(C, X, Y), gradPsi(C, X, Y))
+
+    sepX = separatrix[:, 0]
+    sepY = separatrix[:, 1]
+
+    if delta < 0:
+        goal = 0.75*Lx
+        current = max(sepX)
+    else:
+        goal = 0.25*Lx
+        current = min(sepX)
+
+    shift = goal - current
+
+    while (Rmin + shift < tolBound) or (Rmax + shift > Ly - tolBound):
+        shift *= 1+1e-3
+        iterations += 1
+        if iterations > 1000:
+            print("Centering of legs aborted. Profile may have unappropriate shaping...")
+            return C
+
+    xcurrents, ycurrents, ccurrents = C
+    xcurrentsnew = [x + shift for x in xcurrents]
+    Cnew = [xcurrentsnew, ycurrents, ccurrents]
+    print(f"Legs shifted by {shift}")
+
+    kappa, delta, Rmin, Rmax = specs(Cnew, True)
+
+    return Cnew
+
+
+# %% Optimize initial config to lie within Xpt bounds :
+if (Xlb < 0) or (Xub < 0) or (Xlb > Ly) or (Xub > Ly):
+    raise ValueError(
+        f"ERROR : bounds on X point vertical coordinate must lie within [0, {Ly}] ")
+
+
+# Swaps bounds if there has been mismatch
+if Xlb > Xub:
+    Xlb, Xub = Xub, Xlb
+elif Xlb == Xub:
+    print("WARNING : Upper and lower bounds on X point vertical coordinate are set to equal. The optimization process may not converge")
+
+
+print(
+    f"Constraint on Xpoint vertical coordinate : {Xlb} < Y < {Xub}.\nIf the optimization fails to converge, try widening this interval\n\n")
+
+
+print("Matching initial config with bounds on X-point coordinates...")
+
+_, Yxpt = XptCoords(C0)
+
+while not(isXptInBnds(C0, Xlb, Xub)):
+
+    for i in range(len(C0[-1])):
+
+        C0 = optimizeC(C0, i, 'X')
+        if isXptInBnds(C0, Xlb, Xub):
+            break
+
+print("Initial configuration now lies within bounds on X-point coordinates")
+
 # %% Plot initial config
 plt.figure()
-plotMagField(C)
+plotMagField(C0)
 plt.show()
 plt.close()
 
 # %% OPTIMIZE TRIANGULARITY
 
 
-kappa, delta = specs(C)
+kappa, delta = specs(C0)
 
 for deltaTarg in deltaTargs:
 
     iteration = 0
     tol = tolerance
     C = [list(elt) for elt in C0]
+
     print("--------------------------------")
     print("NEW OPTIMIZATION")
     print(f"Target triangularity : delta = {deltaTarg}")
@@ -598,6 +695,8 @@ for deltaTarg in deltaTargs:
     plt.show()
 
     kappa, delta = specs(C)
+    Cbest = [list(elt) for elt in C]
+    costBest = abs(kappaTarg-kappa)**2 + abs(deltaTarg-delta)**2
 
     # Check parameters to optimize after each modification
     if (abs(delta-deltaTarg) <= tol) and (abs(kappa-kappaTarg) > tol):
@@ -630,15 +729,26 @@ for deltaTarg in deltaTargs:
 
         # Optimization of x-coord of main divertor
         COld = list(C)
-        costOld = abs(kappaTarg-kappa) + abs(deltaTarg-delta)
 
         C = optimizeX0(C, toOp)
         kappa, delta = specs(C)
-        cost = abs(kappaTarg-kappa) + abs(deltaTarg-delta)
+        cost = abs(kappaTarg-kappa)**2 + abs(deltaTarg-delta)**2
+
+        if cost < costBest:
+            Cbest, costBest = [list(elt) for elt in C], cost
+            print("New best config!")
+
+            # Plot current magnetic profile
+            plt.figure()
+            plotMagField(C)
+            plt.show()
 
         # If previous config was better when targets reached, do not make it worse plz
-        if (toOp == None) and (costOld < cost):
-            C = list(COld)
+        if (toOp == None):
+
+            costOld = abs(kappaTarg-kappa)**2 + abs(deltaTarg-delta)**2
+            if (costOld < cost):
+                C = list(COld)
 
         # Check parameters to optimize
         if (abs(delta-deltaTarg) <= tol) and (abs(kappa-kappaTarg) > tol):
@@ -651,10 +761,9 @@ for deltaTarg in deltaTargs:
         # Compute Xpoint coordinates
         Xxpt, Yxpt = XptCoords(C)
 
-        # Plot current magnetic profile
-        plt.figure()
-        plotMagField(C)
-        plt.show()
+        # plt.figure()
+        # plotMagField(C)
+        # plt.show()
 
         print(f"Round n° {iteration} : c-by-c optimization...")
 
@@ -669,7 +778,14 @@ for deltaTarg in deltaTargs:
 
             C = optimizeC(C, i, toOp)
             kappa, delta = specs(C)
-            cost = abs(kappaTarg-kappa) + abs(deltaTarg-delta)
+            cost = abs(kappaTarg-kappa)**2 + abs(deltaTarg-delta)**2
+
+            if cost < costBest:
+                Cbest, costBest = [list(elt) for elt in C], cost
+                print("New best config!")
+                plt.figure()
+                plotMagField(C)
+                plt.show()
 
             # If previous config was better when targets reached, do not make it worse plz
             if (toOp == None) and (costOld < cost):
@@ -683,9 +799,9 @@ for deltaTarg in deltaTargs:
             else:
                 toOp = None
 
-            plt.figure()
-            plotMagField(C)
-            plt.show()
+            # plt.figure()
+            # plotMagField(C)
+            # plt.show()
 
         print("----------------------------")
 
@@ -696,6 +812,8 @@ for deltaTarg in deltaTargs:
         print('Execution time in seconds: ' + str(executionTime))
         print('Execution time in minutes: ' + str(executionTime/60))
         print("Optimization success!")
+
+    C = Cbest
 
     # Display final results
     print("Final configuration : ")
@@ -708,19 +826,34 @@ for deltaTarg in deltaTargs:
 
     # Save data and plot profile
 
+    with open(respath+f"Cuncentered_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.pkl", "wb") as file:
+        dump(C, file)
+
+    plt.figure()
+    plotMagField(C)
+    plt.savefig(
+        respath+f"Cuncentered_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.png", format="png")
+    plt.show()
+
+    # Centering legs of separatrix to avoid problems at boundaries
+    C = centerLegs(C)
+
     with open(respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.pkl", "wb") as file:
         dump(C, file)
 
     plt.figure()
     plotMagField(C)
     plt.savefig(
-        respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}.png", format="png")
+        respath+f"C_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.png", format="png")
     plt.show()
 
     plt.figure()
-    psi = Psi(C)
-    plt.pcolormesh(psi)
+    psi = Psi(C, X, Y)
+    plt.pcolormesh([x, y], psi)
+    plt.title(r"$\Psi$")
     plt.colorbar()
+    plt.savefig(
+        respath+f"psi_delta_{deltaTarg}_kappa_{kappaTarg}_Yl_{Xlb}_Yu_{Xub}.png")
     plt.show()
 
 
@@ -733,14 +866,17 @@ for deltaTarg in deltaTargs:
     if GBS:
         Xxpt, Yxpt = XptCoords(C)
 
-        psi = Psi(C)
-        dpdx, dpdy = gradPsi(C)
+        psi = Psi(C, X, Y)
+        dpdx, dpdy = gradPsi(C, X, Y)
+        dpdxn, dpdyn = gradPsi(C, Xn, Yn)
 
-        iX, iY = XptCoordsIdx(gradPsi(C))
+        iX, iY = XptCoordsIdx(gradPsi(C, X, Y))
         iYup = len(y) - iY
         Yxptup = y[iYup]
 
-        d2pdx2, d2pdy2, d2pdxy = grad2Psicheat(C)
+        d2pdx2, d2pdy2, d2pdxy = grad2Psicheat(C, X, Y)
+        d2pdx2n, d2pdy2n, d2pdxyn = grad2Psicheat(C, Xn, Yn)
+
         triang = ("_NT_" if deltaTarg < 0 else "_PT_") + \
             "d" + (str(deltaTarg).replace('.', 'p'))
 
@@ -757,6 +893,16 @@ for deltaTarg in deltaTargs:
             d2psidy2_v = f.create_dataset(
                 "d2psidy2_v", (324, 244), dtype='float64')
             d2psidy2_v[...] = d2pdy2
+            dpdx_n = f.create_dataset("dpsidx_n", (324, 244), dtype='float64')
+            dpdx_n[...] = dpdxn
+            dpdy_n = f.create_dataset("dpsidy_n", (324, 244), dtype='float64')
+            dpdy_n[...] = dpdyn
+            d2psidx2_n = f.create_dataset(
+                "d2psidx2_n", (324, 244), dtype='float64')
+            d2psidx2_n[...] = d2pdx2n
+            d2psidy2_n = f.create_dataset(
+                "d2psidy2_n", (324, 244), dtype='float64')
+            d2psidy2_n[...] = d2pdy2n
             xmain = f.create_dataset("xmag1", (1, 1), dtype='float64')
             xmain[...] = C[0][0]    # x0
             ymain = f.create_dataset("y0_source", (1, 1), dtype='float64')
